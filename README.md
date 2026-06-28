@@ -1137,3 +1137,13 @@ Perubahan:
 - Firestore Rules diubah agar project admin public boleh dibaca.
 - Data private source code tetap terkunci di `private/settings` dan `keys`.
 - Baca `FIX_LINK_PUBLIC.md`.
+
+
+## Fix Download Source Code
+
+Perubahan:
+- Setelah key valid, link `Download / Buka Source Code` muncul.
+- Ada tombol `Copy Link Download`.
+- Link source code disinkronkan ke key lama saat admin menyimpan ulang project.
+- Generate key baru wajib memakai link source code yang aman.
+- Baca `FIX_DOWNLOAD_SOURCE.md`.

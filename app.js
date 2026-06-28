@@ -1141,6 +1141,45 @@ function getAccessStorageKey(ownerUid, projectId) {
   return `codeprogress_access_key_${ownerUid}_${projectId}`;
 }
 
+function hasSafeSourceAccess(access = publicAccess) {
+  return Boolean(
+    access?.fileUrl &&
+    isSafeExternalUrl(access.fileUrl, {
+      allowLocalHttp: true,
+      allowedHosts: SECURITY_CONFIG.allowedDownloadHosts
+    })
+  );
+}
+
+async function syncProjectKeysFileUrl(projectId, fileUrl, projectName = "") {
+  if (!isAdminUser() || !projectId || !fileUrl) return;
+
+  try {
+    const snapshot = await getDocs(getKeysRef(currentUser.uid, projectId));
+    const jobs = snapshot.docs.map(item => {
+      const data = item.data() || {};
+      const nextData = {
+        fileUrl,
+        updatedAt: nowIso()
+      };
+
+      if (projectName) {
+        nextData.projectName = projectName;
+      }
+
+      if (data.projectId !== projectId) {
+        nextData.projectId = projectId;
+      }
+
+      return updateDoc(item.ref, nextData);
+    });
+
+    await Promise.allSettled(jobs);
+  } catch (error) {
+    console.warn("Gagal sinkron link source code ke key lama:", error);
+  }
+}
+
 function getAccessDocFromSnapshot(snapshot) {
   if (!snapshot.exists()) return null;
   const data = snapshot.data();
@@ -1291,7 +1330,7 @@ function renderPublicItemList(items, emptyText) {
 function renderProjectAccessCard(project, ownerUid, variant = "public") {
   const waUrl = getWhatsAppKeyUrl(project, ownerUid);
   const hasWa = Boolean(cleanWhatsAppNumber(project.whatsappNumber));
-  const hasAccess = Boolean(publicAccess?.fileUrl);
+  const hasAccess = hasSafeSourceAccess(publicAccess);
   const wrapperClass = variant === "viewer" ? "viewer-access-card" : "public-download-card";
 
   return `
@@ -1310,7 +1349,15 @@ function renderProjectAccessCard(project, ownerUid, variant = "public") {
           !currentUser
             ? `<button class="btn btn-primary btn-big" data-public-login="true">Login dulu untuk akses file</button>`
             : hasAccess
-              ? `<button class="btn btn-primary btn-big" type="button" data-open-protected-source="true">Buka Source Code</button>`
+              ? `
+                <a
+                  class="btn btn-primary btn-big"
+                  href="${esc(safeExternalHref(publicAccess.fileUrl))}"
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                >Download / Buka Source Code</a>
+                <button class="btn btn-ghost btn-full" type="button" data-copy-source-url="${esc(safeExternalHref(publicAccess.fileUrl))}">Copy Link Download</button>
+              `
               : `
                 ${hasWa ? `
 ` : ""}
@@ -1327,8 +1374,10 @@ function renderProjectAccessCard(project, ownerUid, variant = "public") {
             !currentUser
               ? "Login dibutuhkan agar satu key hanya terikat ke satu akun."
               : hasAccess
-                ? `Key aktif: ${esc(publicAccess.key)} • akses dicek ulang sebelum link dibuka.`
-                : renderWhatsAppAdminText(project)
+                ? `Key aktif: ${esc(publicAccess.key)} • link download hanya muncul untuk akun yang key-nya valid.`
+                : publicAccess?.key && !hasAccess
+                  ? "Key valid, tapi link source code belum tersimpan di key ini. Admin perlu klik Edit Project → Simpan Perubahan, lalu refresh halaman."
+                  : renderWhatsAppAdminText(project)
           }
         </small>
       </div>
@@ -2564,11 +2613,24 @@ async function generateDashboardAccessKey() {
 
   try {
     const privateSnap = await getDoc(getProjectPrivateRef(currentUser.uid, projectId));
-    const fileUrl = privateSnap.exists() ? (privateSnap.data().fileUrl || "") : "";
+    const fileUrl = normalizeExternalUrl(privateSnap.exists() ? (privateSnap.data().fileUrl || "") : "");
 
     if (!fileUrl) {
       showWarningPopup("Link File Belum Ada", "Simpan link source code terlebih dahulu sebelum membuat key.");
       showPopupNotification("warning", "Link File Belum Ada", "Simpan link source code terlebih dahulu sebelum membuat key.");
+      if (button) {
+        button.disabled = false;
+        button.textContent = "Generate Key Akses";
+      }
+      keepScrollPosition(scrollY);
+      return;
+    }
+
+    if (!isSafeExternalUrl(fileUrl, {
+      allowLocalHttp: true,
+      allowedHosts: SECURITY_CONFIG.allowedDownloadHosts
+    })) {
+      showWarningPopup("Link Source Tidak Aman", "Perbaiki link source code di Edit Project. Gunakan host aman seperti MediaFire, Google Drive, GitHub, Vercel, Netlify, atau Catbox.");
       if (button) {
         button.disabled = false;
         button.textContent = "Generate Key Akses";
@@ -3539,6 +3601,8 @@ async function saveProjectForm(form) {
         updatedAt: nowIso()
       }, { merge: true });
 
+      await syncProjectKeysFileUrl(projectId, projectDownloadUrl, name);
+
       await syncPublicProject({
         id: projectId,
         name,
@@ -4233,6 +4297,8 @@ async function openProtectedPublicSource() {
     publicAccess = verifiedAccess;
     localStorage.setItem(getAccessStorageKey(publicOwnerUid, publicProject.id), activeKey);
 
+    renderPublicProject(publicProject, publicOwnerUid);
+
     const safeUrl = safeExternalHref(verifiedAccess.fileUrl);
 
     if (sourceWindow && !sourceWindow.closed) {
@@ -4241,7 +4307,7 @@ async function openProtectedPublicSource() {
       window.open(safeUrl, "_blank", "noopener,noreferrer");
     }
 
-    showToast("Akses valid, source code dibuka.");
+    showToast("Akses valid, link download source code sudah muncul.");
   } catch (error) {
     if (sourceWindow) sourceWindow.close();
 
@@ -4534,6 +4600,11 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+
+  if (target.dataset.copySourceUrl) {
+    await copyText(target.dataset.copySourceUrl, "Link download source code berhasil disalin.");
+    return;
+  }
 
   if (target.dataset.openProtectedSource) {
     await openProtectedPublicSource();

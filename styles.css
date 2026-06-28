@@ -23143,3 +23143,22 @@ button.is-loading {
   vertical-align: -2px !important;
   animation: btnSpin 0.75s linear infinite !important;
 }
+
+
+/* FIX DOWNLOAD SOURCE LINK MUNCUL */
+.download-action-box .btn + .btn {
+  margin-top: 10px !important;
+}
+
+.download-action-box .btn-ghost {
+  width: 100% !important;
+  border: 1px solid rgba(255, 117, 48, 0.18) !important;
+  background: rgba(9, 3, 2, 0.72) !important;
+  color: #fff3e8 !important;
+  box-shadow: none !important;
+}
+
+.download-action-box .btn-ghost:hover {
+  border-color: rgba(255, 117, 48, 0.34) !important;
+  background: rgba(255, 117, 48, 0.08) !important;
+}

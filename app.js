@@ -52,6 +52,7 @@ let dashboardClockTimer = null;
 let selectedProfilePhotoFile = null;
 let isSavingProfile = false;
 let isClaimingKey = false;
+let isOpeningProtectedSource = false;
 
 let unsubscribeKeys = null;
 let keysProjectId = null;
@@ -1195,6 +1196,10 @@ async function logout() {
   try {
     if (unsubscribeProjects) unsubscribeProjects();
     unsubscribeProjects = null;
+    if (publicOwnerUid && publicProject?.id) {
+      localStorage.removeItem(getAccessStorageKey(publicOwnerUid, publicProject.id));
+    }
+    publicAccess = null;
     await signOut(auth);
   } catch (error) {
     showError(error, "Logout gagal.");
@@ -1305,7 +1310,7 @@ function renderProjectAccessCard(project, ownerUid, variant = "public") {
           !currentUser
             ? `<button class="btn btn-primary btn-big" data-public-login="true">Login dulu untuk akses file</button>`
             : hasAccess
-              ? `<a class="btn btn-primary btn-big" href="${esc(safeExternalHref(publicAccess.fileUrl))}" target="_blank" rel="noopener noreferrer nofollow">Buka Source Code</a>`
+              ? `<button class="btn btn-primary btn-big" type="button" data-open-protected-source="true">Buka Source Code</button>`
               : `
                 ${hasWa ? `
 ` : ""}
@@ -1322,7 +1327,7 @@ function renderProjectAccessCard(project, ownerUid, variant = "public") {
             !currentUser
               ? "Login dibutuhkan agar satu key hanya terikat ke satu akun."
               : hasAccess
-                ? `Key aktif: ${esc(publicAccess.key)}`
+                ? `Key aktif: ${esc(publicAccess.key)} • akses dicek ulang sebelum link dibuka.`
                 : renderWhatsAppAdminText(project)
           }
         </small>
@@ -4055,6 +4060,182 @@ function setClaimKeyLoading(isLoading, text = "Memproses Key...") {
   }
 }
 
+function setProtectedSourceLoading(isLoading, text = "Mengecek Akses...") {
+  const button = document.querySelector("[data-open-protected-source]");
+
+  if (!button) return;
+
+  button.disabled = Boolean(isLoading);
+  button.classList.toggle("is-loading", Boolean(isLoading));
+
+  if (isLoading) {
+    button.dataset.originalText = button.dataset.originalText || button.textContent.trim() || "Buka Source Code";
+    button.innerHTML = `<span class="btn-loader"></span>${text}`;
+  } else {
+    button.innerHTML = button.dataset.originalText || "Buka Source Code";
+  }
+}
+
+async function openProtectedPublicSource() {
+  if (isOpeningProtectedSource) {
+    showWarningPopup("Sedang Dicek", "Tunggu proses pengecekan akses selesai dulu.");
+    return;
+  }
+
+  if (!currentUser) {
+    showWarningPopup(
+      "Login Diperlukan",
+      "Login dulu agar akses source code bisa dicek berdasarkan akun kamu."
+    );
+    await loginGoogle();
+    return;
+  }
+
+  if (!publicProject || !publicOwnerUid) {
+    showWarningPopup(
+      "Project Belum Siap",
+      "Data project belum selesai dimuat. Refresh halaman lalu coba lagi."
+    );
+    return;
+  }
+
+  const storedKey = normalizeKey(localStorage.getItem(getAccessStorageKey(publicOwnerUid, publicProject.id)));
+  const activeKey = normalizeKey(publicAccess?.key || storedKey);
+
+  if (!activeKey || !SECURITY_CONFIG.keyPattern.test(activeKey)) {
+    showWarningPopup(
+      "Akses Belum Valid",
+      "Masukkan key yang valid dulu sebelum membuka source code."
+    );
+    return;
+  }
+
+  let sourceWindow = null;
+
+  try {
+    sourceWindow = window.open("about:blank", "_blank", "noopener,noreferrer");
+
+    if (sourceWindow) {
+      sourceWindow.document.write(`
+        <html>
+          <head>
+            <title>Mengecek Akses...</title>
+            <meta name="referrer" content="no-referrer">
+            <style>
+              body{
+                margin:0;
+                min-height:100vh;
+                display:grid;
+                place-items:center;
+                background:#090302;
+                color:#fff7ed;
+                font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+              }
+              div{
+                max-width:320px;
+                text-align:center;
+                padding:24px;
+              }
+              strong{display:block;font-size:20px;margin-bottom:8px;}
+              span{color:#fb923c;}
+            </style>
+          </head>
+          <body>
+            <div>
+              <strong>Mengecek akses...</strong>
+              <p>Tunggu sebentar, source code akan dibuka kalau key valid.</p>
+              <span>CodeProgress Security</span>
+            </div>
+          </body>
+        </html>
+      `);
+      sourceWindow.document.close();
+    }
+  } catch {
+    sourceWindow = null;
+  }
+
+  isOpeningProtectedSource = true;
+  setProtectedSourceLoading(true);
+
+  try {
+    const keyRef = getKeyRef(publicOwnerUid, publicProject.id, activeKey);
+    const snap = await getDoc(keyRef);
+    const verifiedAccess = getAccessDocFromSnapshot(snap);
+
+    if (!verifiedAccess) {
+      if (sourceWindow) sourceWindow.close();
+
+      localStorage.removeItem(getAccessStorageKey(publicOwnerUid, publicProject.id));
+      publicAccess = null;
+      renderPublicProject(publicProject, publicOwnerUid);
+
+      showWarningPopup(
+        "Akses Tidak Valid",
+        "Key belum dikunci ke akun ini, sudah dicabut, atau bukan milik akun kamu."
+      );
+      return;
+    }
+
+    if (verifiedAccess.projectId && verifiedAccess.projectId !== publicProject.id) {
+      if (sourceWindow) sourceWindow.close();
+
+      showWarningPopup(
+        "Key Tidak Cocok",
+        "Key ini tidak cocok untuk project yang sedang dibuka."
+      );
+      return;
+    }
+
+    if (!isSafeExternalUrl(verifiedAccess.fileUrl, {
+      allowLocalHttp: true,
+      allowedHosts: SECURITY_CONFIG.allowedDownloadHosts
+    })) {
+      if (sourceWindow) sourceWindow.close();
+
+      showWarningPopup(
+        "Link Source Diblokir",
+        "Link source code tidak masuk daftar host aman. Minta admin memperbarui link."
+      );
+      return;
+    }
+
+    publicAccess = verifiedAccess;
+    localStorage.setItem(getAccessStorageKey(publicOwnerUid, publicProject.id), activeKey);
+
+    const safeUrl = safeExternalHref(verifiedAccess.fileUrl);
+
+    if (sourceWindow && !sourceWindow.closed) {
+      sourceWindow.location.replace(safeUrl);
+    } else {
+      window.open(safeUrl, "_blank", "noopener,noreferrer");
+    }
+
+    showToast("Akses valid, source code dibuka.");
+  } catch (error) {
+    if (sourceWindow) sourceWindow.close();
+
+    console.error(error);
+
+    if (error?.code === "permission-denied") {
+      showWarningPopup(
+        "Akses Ditolak",
+        "Akun ini tidak punya izin membuka link source code. Pastikan key sudah valid untuk akun ini."
+      );
+      return;
+    }
+
+    showPopupNotification(
+      "error",
+      "Gagal Membuka Source",
+      "Koneksi bermasalah saat mengecek key. Refresh halaman lalu coba lagi."
+    );
+  } finally {
+    isOpeningProtectedSource = false;
+    setProtectedSourceLoading(false);
+  }
+}
+
 function setSavePhotoLinkLoading(isLoading, text = "Menyimpan Link...") {
   const btn = document.getElementById("saveScreenshotBtn");
   const input = document.getElementById("screenshotUrlInput");
@@ -4323,6 +4504,11 @@ document.addEventListener("click", async (event) => {
     return;
   }
 
+
+  if (target.dataset.openProtectedSource) {
+    await openProtectedPublicSource();
+    return;
+  }
 
   if (target.id === "googleLoginBtn" || target.dataset.publicLogin) {
     await loginGoogle();

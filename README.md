@@ -1114,3 +1114,16 @@ Perubahan:
 - Klaim key lebih ketat.
 - Rules Firebase lebih aman.
 - Anti double submit key.
+
+
+## Public Link Security Ketat
+
+Perubahan:
+- Link public tetap dipakai.
+- URL source code tidak lagi muncul langsung di atribut href tombol.
+- Saat tombol Buka Source Code ditekan, web mengecek ulang key ke Firestore.
+- Key harus masih terkunci ke UID akun yang login.
+- Key harus cocok dengan project.
+- Link harus masuk host aman.
+- Kalau admin menghapus key, akses dari web akan gagal.
+- Baca `PUBLIC_LINK_SECURITY.md`.

@@ -23116,3 +23116,30 @@ button.is-loading {
 @keyframes btnSpin {
   to { transform: rotate(360deg); }
 }
+
+
+/* PUBLIC LINK STRICT SECURITY */
+[data-open-protected-source] {
+  position: relative !important;
+}
+
+[data-open-protected-source].is-loading {
+  cursor: wait !important;
+  opacity: 0.86 !important;
+}
+
+.download-action-box small {
+  line-height: 1.55 !important;
+}
+
+.btn-loader {
+  width: 14px !important;
+  height: 14px !important;
+  margin-right: 8px !important;
+  border-radius: 50% !important;
+  border: 2px solid rgba(255, 255, 255, 0.36) !important;
+  border-top-color: #ffffff !important;
+  display: inline-block !important;
+  vertical-align: -2px !important;
+  animation: btnSpin 0.75s linear infinite !important;
+}

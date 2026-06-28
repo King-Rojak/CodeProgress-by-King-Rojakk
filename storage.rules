@@ -2,31 +2,16 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    match /users/{userId}/projects/{projectId}/screenshots/{fileName} {
-      allow read: if true;
-      allow create, update: if request.auth != null
-                            && request.auth.uid == userId
-                            && request.resource.size < 5 * 1024 * 1024
-                            && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null && request.auth.uid == userId;
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.uid == "ST4UPUpnnva8eBp11hpnTFuT6DP2";
     }
 
-    match /users/{userId}/profile/{fileName} {
+    match /{allPaths=**} {
       allow read: if true;
-      allow create, update: if request.auth != null
-                            && request.auth.uid == userId
-                            && request.resource.size < 5 * 1024 * 1024
-                            && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null && request.auth.uid == userId;
-    }
-
-    match /users/{userId}/{allPaths=**} {
-      allow read: if request.auth != null && request.auth.uid == userId;
-      allow create, update: if request.auth != null
-                            && request.auth.uid == userId
-                            && request.resource.size < 5 * 1024 * 1024
-                            && request.resource.contentType.matches('image/.*');
-      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow write: if isAdmin()
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
     }
   }
 }

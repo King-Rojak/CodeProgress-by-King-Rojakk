@@ -7,21 +7,45 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return signedIn()
-        && request.auth.token.email == "ahmadrzzaq14@gmail.com";
-    }
-
-    function isOwner(userId) {
-      return signedIn()
-        && request.auth.uid == userId;
+      return signedIn() && request.auth.uid == "ST4UPUpnnva8eBp11hpnTFuT6DP2";
     }
 
     function isAdminOwner(userId) {
-      return isAdmin() && isOwner(userId);
+      return isAdmin() && userId == request.auth.uid;
+    }
+
+    function keyClaimOnlyChangedFields() {
+      return request.resource.data.diff(resource.data).changedKeys().hasOnly([
+        "isUsed",
+        "usedBy",
+        "usedByEmail",
+        "usedByName",
+        "usedAt"
+      ]);
+    }
+
+    function keyStillKeepsOriginalData() {
+      return request.resource.data.key == resource.data.key
+        && request.resource.data.fileUrl == resource.data.fileUrl
+        && request.resource.data.projectId == resource.data.projectId
+        && request.resource.data.projectName == resource.data.projectName
+        && request.resource.data.createdAt == resource.data.createdAt;
+    }
+
+    function isValidKeyClaim() {
+      return signedIn()
+        && resource.data.isUsed == false
+        && request.resource.data.isUsed == true
+        && request.resource.data.usedBy == request.auth.uid
+        && request.resource.data.usedByEmail is string
+        && request.resource.data.usedByName is string
+        && request.resource.data.usedAt == request.time
+        && keyClaimOnlyChangedFields()
+        && keyStillKeepsOriginalData();
     }
 
     match /publicProjects/{projectId} {
-      allow get, list: if true;
+      allow read: if true;
       allow create, update, delete: if isAdmin();
     }
 
@@ -29,47 +53,22 @@ service cloud.firestore {
       allow read, write: if isAdminOwner(userId);
 
       match /projects/{projectId} {
-        allow get: if isAdminOwner(userId)
-                   || resource.data.isPublic == true;
-
-        allow list: if isAdminOwner(userId);
-
+        allow read: if isAdminOwner(userId);
         allow create, update, delete: if isAdminOwner(userId);
 
-        match /private/{privateDoc} {
+        match /private/{docId} {
           allow read, write: if isAdminOwner(userId);
         }
 
         match /keys/{keyId} {
-          allow list: if isAdminOwner(userId);
+          allow read: if isAdminOwner(userId)
+            || (signedIn() && resource.data.usedBy == request.auth.uid);
 
-          allow create: if isAdminOwner(userId);
+          allow create, delete: if isAdminOwner(userId);
 
-          allow get: if signedIn()
-                     && (
-                       isAdminOwner(userId)
-                       || resource.data.isUsed == false
-                       || resource.data.usedBy == request.auth.uid
-                     );
-
-          allow update: if signedIn()
-                        && (
-                          isAdminOwner(userId)
-                          || (
-                            resource.data.isUsed == false
-                            && request.resource.data.isUsed == true
-                            && request.resource.data.usedBy == request.auth.uid
-                            && request.resource.data.diff(resource.data).affectedKeys()
-                              .hasOnly(['isUsed', 'usedBy', 'usedByEmail', 'usedByName', 'usedAt'])
-                          )
-                        );
-
-          allow delete: if isAdminOwner(userId);
+          allow update: if isAdminOwner(userId)
+            || (userId == "ST4UPUpnnva8eBp11hpnTFuT6DP2" && isValidKeyClaim());
         }
-      }
-
-      match /{document=**} {
-        allow read, write: if isAdminOwner(userId);
       }
     }
   }

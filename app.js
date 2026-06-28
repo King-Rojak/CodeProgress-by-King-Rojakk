@@ -51,6 +51,7 @@ let welcomePopupShown = false;
 let dashboardClockTimer = null;
 let selectedProfilePhotoFile = null;
 let isSavingProfile = false;
+let isClaimingKey = false;
 
 let unsubscribeKeys = null;
 let keysProjectId = null;
@@ -65,9 +66,44 @@ const ADMIN_EMAIL = "ahmadrzzaq14@gmail.com";
 const ADMIN_UID = "ST4UPUpnnva8eBp11hpnTFuT6DP2";
 const DEFAULT_WHATSAPP_NUMBER = "6283867622796";
 const BRAND_OWNER_NAME = "King Rojak";
+const SECURITY_CONFIG = {
+  keyMaxAttempts: 5,
+  keyLockMs: 5 * 60 * 1000,
+  maxProjectNameLength: 80,
+  maxProjectDescriptionLength: 1800,
+  maxProjectTechLength: 350,
+  maxWhatsappLength: 16,
+  keyPattern: /^CP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/,
+  allowedDownloadHosts: [
+    "mediafire.com",
+    "www.mediafire.com",
+    "drive.google.com",
+    "github.com",
+    "github.io",
+    "vercel.app",
+    "netlify.app",
+    "catbox.moe",
+    "files.catbox.moe"
+  ],
+  allowedImageHosts: [
+    "i.imgur.com",
+    "imgur.com",
+    "postimg.cc",
+    "i.postimg.cc",
+    "catbox.moe",
+    "files.catbox.moe",
+    "lh3.googleusercontent.com",
+    "drive.google.com",
+    "googleusercontent.com"
+  ]
+};
 
 function isAdminUser(user = currentUser) {
-  return Boolean(user?.email && user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase());
+  return Boolean(
+    user?.uid === ADMIN_UID &&
+    user?.email &&
+    user.email.toLowerCase() === ADMIN_EMAIL.toLowerCase()
+  );
 }
 
 function requireAdmin() {
@@ -356,6 +392,181 @@ function renderWhatsAppAdminText(project = null) {
   return `Belum punya key? Beli key lewat <a class="whatsapp-admin-link" href="${getAdminWhatsAppLink(project)}" target="_blank" rel="noopener">WhatsApp admin</a>.`;
 }
 
+
+function isAllowedHost(hostname = "", allowedHosts = []) {
+  const host = String(hostname || "").toLowerCase();
+
+  return allowedHosts.some(allowed => {
+    const clean = String(allowed || "").toLowerCase();
+    return host === clean || host.endsWith("." + clean);
+  });
+}
+
+function isLocalHttpHost(hostname = "") {
+  const host = String(hostname || "").toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+function normalizeExternalUrl(value = "") {
+  return String(value || "").trim();
+}
+
+function isSafeExternalUrl(value = "", options = {}) {
+  const url = normalizeExternalUrl(value);
+  if (!url) return options.allowEmpty === true;
+
+  try {
+    const parsed = new URL(url);
+    const protocol = parsed.protocol.toLowerCase();
+
+    if (protocol === "http:" && !(options.allowLocalHttp && isLocalHttpHost(parsed.hostname))) {
+      return false;
+    }
+
+    if (protocol !== "https:" && protocol !== "http:") {
+      return false;
+    }
+
+    if (Array.isArray(options.allowedHosts) && options.allowedHosts.length > 0) {
+      return isAllowedHost(parsed.hostname, options.allowedHosts);
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function safeExternalHref(value = "") {
+  const url = normalizeExternalUrl(value);
+
+  if (!isSafeExternalUrl(url, { allowLocalHttp: true })) {
+    return "#";
+  }
+
+  return url;
+}
+
+function validateProjectSecurityInput({ name, description, tech, whatsappNumber, projectDownloadUrl }) {
+  if (!name || name.length > SECURITY_CONFIG.maxProjectNameLength) {
+    return {
+      ok: false,
+      title: "Nama Project Kurang Valid",
+      message: `Nama project wajib diisi dan maksimal ${SECURITY_CONFIG.maxProjectNameLength} karakter.`
+    };
+  }
+
+  if (description.length > SECURITY_CONFIG.maxProjectDescriptionLength) {
+    return {
+      ok: false,
+      title: "Deskripsi Terlalu Panjang",
+      message: `Deskripsi maksimal ${SECURITY_CONFIG.maxProjectDescriptionLength} karakter agar halaman tetap ringan.`
+    };
+  }
+
+  if (tech.length > SECURITY_CONFIG.maxProjectTechLength) {
+    return {
+      ok: false,
+      title: "Teknologi Terlalu Panjang",
+      message: `Daftar teknologi maksimal ${SECURITY_CONFIG.maxProjectTechLength} karakter.`
+    };
+  }
+
+  if (whatsappNumber.length > SECURITY_CONFIG.maxWhatsappLength) {
+    return {
+      ok: false,
+      title: "Nomor WhatsApp Tidak Valid",
+      message: "Nomor WhatsApp terlalu panjang. Masukkan nomor aktif dengan format Indonesia."
+    };
+  }
+
+  if (projectDownloadUrl && !isSafeExternalUrl(projectDownloadUrl, {
+    allowLocalHttp: true,
+    allowedHosts: SECURITY_CONFIG.allowedDownloadHosts
+  })) {
+    return {
+      ok: false,
+      title: "Link Source Code Ditolak",
+      message: "Gunakan link HTTPS dari MediaFire, Google Drive, GitHub, Vercel, Netlify, atau Catbox. Link javascript/data/http publik diblokir."
+    };
+  }
+
+  return { ok: true };
+}
+
+function getKeyAttemptStorageKey(ownerUid, projectId, userId = currentUser?.uid || "guest") {
+  return `codeprogress_key_attempts_${ownerUid || "owner"}_${projectId || "project"}_${userId}`;
+}
+
+function readKeyAttemptState(ownerUid, projectId) {
+  try {
+    const raw = localStorage.getItem(getKeyAttemptStorageKey(ownerUid, projectId));
+    const state = raw ? JSON.parse(raw) : null;
+
+    if (!state || typeof state !== "object") {
+      return { count: 0, lockUntil: 0, updatedAt: 0 };
+    }
+
+    if (state.lockUntil && Number(state.lockUntil) <= Date.now()) {
+      clearKeyAttempts(ownerUid, projectId);
+      return { count: 0, lockUntil: 0, updatedAt: 0 };
+    }
+
+    return {
+      count: Number(state.count) || 0,
+      lockUntil: Number(state.lockUntil) || 0,
+      updatedAt: Number(state.updatedAt) || 0
+    };
+  } catch {
+    return { count: 0, lockUntil: 0, updatedAt: 0 };
+  }
+}
+
+function clearKeyAttempts(ownerUid, projectId) {
+  try {
+    localStorage.removeItem(getKeyAttemptStorageKey(ownerUid, projectId));
+  } catch {}
+}
+
+function getKeyLockInfo(ownerUid, projectId) {
+  const state = readKeyAttemptState(ownerUid, projectId);
+  const remainingMs = Math.max(0, state.lockUntil - Date.now());
+
+  return {
+    locked: remainingMs > 0,
+    remainingMs,
+    remainingSeconds: Math.ceil(remainingMs / 1000)
+  };
+}
+
+function registerFailedKeyAttempt(ownerUid, projectId) {
+  const state = readKeyAttemptState(ownerUid, projectId);
+  const nextCount = state.count + 1;
+  const shouldLock = nextCount >= SECURITY_CONFIG.keyMaxAttempts;
+  const nextState = {
+    count: shouldLock ? SECURITY_CONFIG.keyMaxAttempts : nextCount,
+    lockUntil: shouldLock ? Date.now() + SECURITY_CONFIG.keyLockMs : 0,
+    updatedAt: Date.now()
+  };
+
+  try {
+    localStorage.setItem(getKeyAttemptStorageKey(ownerUid, projectId), JSON.stringify(nextState));
+  } catch {}
+
+  return {
+    locked: shouldLock,
+    remainingAttempts: Math.max(0, SECURITY_CONFIG.keyMaxAttempts - nextCount),
+    remainingSeconds: Math.ceil(SECURITY_CONFIG.keyLockMs / 1000)
+  };
+}
+
+function renderKeyAttemptWarning(result) {
+  if (result.locked) {
+    return `Terlalu banyak percobaan salah. Tunggu sekitar ${Math.ceil(result.remainingSeconds / 60)} menit sebelum mencoba lagi.`;
+  }
+
+  return `Percobaan tersisa: ${result.remainingAttempts}.`;
+}
 
 function esc(value) {
   return String(value || "")
@@ -1094,7 +1305,7 @@ function renderProjectAccessCard(project, ownerUid, variant = "public") {
           !currentUser
             ? `<button class="btn btn-primary btn-big" data-public-login="true">Login dulu untuk akses file</button>`
             : hasAccess
-              ? `<a class="btn btn-primary btn-big" href="${esc(publicAccess.fileUrl)}" target="_blank" rel="noopener">Buka Source Code</a>`
+              ? `<a class="btn btn-primary btn-big" href="${esc(safeExternalHref(publicAccess.fileUrl))}" target="_blank" rel="noopener noreferrer nofollow">Buka Source Code</a>`
               : `
                 ${hasWa ? `
 ` : ""}
@@ -1392,6 +1603,11 @@ function handleRoute() {
 async function claimAccessKey(keyValue) {
   const key = normalizeKey(keyValue);
 
+  if (isClaimingKey) {
+    showWarningPopup("Sedang Diproses", "Tunggu proses key sebelumnya selesai dulu.");
+    return;
+  }
+
   if (!currentUser) {
     showWarningPopup(
       "Login Diperlukan",
@@ -1409,6 +1625,15 @@ async function claimAccessKey(keyValue) {
     return;
   }
 
+  const lockInfo = getKeyLockInfo(publicOwnerUid, publicProject.id);
+  if (lockInfo.locked) {
+    showWarningPopup(
+      "Percobaan Dikunci",
+      `Tunggu ${lockInfo.remainingSeconds} detik sebelum mencoba key lagi.`
+    );
+    return;
+  }
+
   if (!key) {
     showWarningPopup(
       "Key Belum Diisi",
@@ -1417,44 +1642,25 @@ async function claimAccessKey(keyValue) {
     return;
   }
 
+  if (!SECURITY_CONFIG.keyPattern.test(key)) {
+    const attempt = registerFailedKeyAttempt(publicOwnerUid, publicProject.id);
+    showWarningPopup(
+      "Format Key Salah",
+      `Format key harus seperti CP-ABCD-1234-EFGH. ${renderKeyAttemptWarning(attempt)}`
+    );
+    return;
+  }
+
+  const keyRef = getKeyRef(publicOwnerUid, publicProject.id, key);
+  isClaimingKey = true;
+  setClaimKeyLoading(true);
+
   try {
-    const keyRef = getKeyRef(publicOwnerUid, publicProject.id, key);
-    const beforeSnap = await getDoc(keyRef);
-
-    if (!beforeSnap.exists()) {
-      showWarningPopup(
-        "Key Tidak Terdaftar",
-        "Key yang kamu masukkan tidak ditemukan. Cek lagi huruf, angka, dan tanda stripnya."
-      );
-      return;
-    }
-
-    const keyData = beforeSnap.data();
-
-    if (keyData.isUsed && keyData.usedBy !== currentUser.uid) {
-      showWarningPopup(
-        "Key Sudah Dipakai",
-        "Key ini sudah terkunci di akun lain. Minta key baru ke admin untuk akun kamu."
-      );
-      return;
-    }
-
-    if (keyData.isUsed && keyData.usedBy === currentUser.uid) {
-      publicAccess = {
-        id: beforeSnap.id,
-        ...keyData
-      };
-
-      localStorage.setItem(getAccessStorageKey(publicOwnerUid, publicProject.id), key);
-
-      renderPublicProject(publicProject, publicOwnerUid);
-      showSuccessPopup(
-        "Akses Sudah Aktif",
-        "Key ini sudah terhubung dengan akun kamu. Source code bisa dibuka sekarang."
-      );
-      return;
-    }
-
+    /*
+      Lebih aman: jangan getDoc() key sebelum update.
+      Rules hanya mengizinkan member update key valid yang belum dipakai,
+      lalu member baru boleh baca key setelah usedBy = uid miliknya.
+    */
     await updateDoc(keyRef, {
       isUsed: true,
       usedBy: currentUser.uid,
@@ -1469,11 +1675,20 @@ async function claimAccessKey(keyValue) {
     if (!access) {
       showWarningPopup(
         "Akses Belum Terbaca",
-        "Key berhasil dikirim, tapi akses belum terbaca. Refresh halaman lalu coba buka lagi."
+        "Key berhasil dikunci ke akun kamu, tapi akses belum terbaca. Refresh halaman lalu coba buka lagi."
       );
       return;
     }
 
+    if (!isSafeExternalUrl(access.fileUrl, { allowLocalHttp: true })) {
+      showWarningPopup(
+        "Link File Diblokir",
+        "Key valid, tetapi link file diblokir karena tidak aman. Hubungi admin untuk memperbarui link source code."
+      );
+      return;
+    }
+
+    clearKeyAttempts(publicOwnerUid, publicProject.id);
     localStorage.setItem(getAccessStorageKey(publicOwnerUid, publicProject.id), key);
 
     publicAccess = access;
@@ -1484,13 +1699,35 @@ async function claimAccessKey(keyValue) {
       "Key valid. Source code untuk project ini sekarang bisa kamu buka."
     );
   } catch (error) {
-    console.error(error);
+    try {
+      const ownSnap = await getDoc(keyRef);
+      const ownAccess = getAccessDocFromSnapshot(ownSnap);
+
+      if (ownAccess) {
+        if (!isSafeExternalUrl(ownAccess.fileUrl, { allowLocalHttp: true })) {
+          showWarningPopup("Link File Tidak Aman", "Akses key terbaca, tetapi link file diblokir karena tidak aman.");
+          return;
+        }
+
+        clearKeyAttempts(publicOwnerUid, publicProject.id);
+        localStorage.setItem(getAccessStorageKey(publicOwnerUid, publicProject.id), key);
+        publicAccess = ownAccess;
+        renderPublicProject(publicProject, publicOwnerUid);
+
+        showSuccessPopup(
+          "Akses Sudah Aktif",
+          "Key ini sudah terhubung dengan akun kamu. Source code bisa dibuka sekarang."
+        );
+        return;
+      }
+    } catch {}
+
+    const attempt = registerFailedKeyAttempt(publicOwnerUid, publicProject.id);
 
     if (error?.code === "permission-denied") {
-      showPopupNotification(
-        "error",
-        "Akses Ditolak Sistem",
-        "Database menolak proses key. Update rules terbaru dari ZIP, lalu publish di console."
+      showWarningPopup(
+        "Key Ditolak",
+        `Key salah, sudah dipakai akun lain, atau tidak terdaftar. ${renderKeyAttemptWarning(attempt)}`
       );
       return;
     }
@@ -1500,6 +1737,9 @@ async function claimAccessKey(keyValue) {
       "Key Gagal Diproses",
       "Koneksi atau sistem sedang bermasalah. Refresh halaman, lalu coba masukkan key lagi."
     );
+  } finally {
+    isClaimingKey = false;
+    setClaimKeyLoading(false);
   }
 }
 
@@ -3148,7 +3388,7 @@ function openProjectModal(projectId = null) {
         <div class="form-grid">
           <div class="form-group">
             <label>Nama Project</label>
-            <input type="text" id="projectName" value="${esc(project?.name || "")}" placeholder="Contoh: Web Store" required />
+            <input type="text" id="projectName" value="${esc(project?.name || "")}" placeholder="Contoh: Web Store" maxlength="${SECURITY_CONFIG.maxProjectNameLength}" required />
           </div>
 
           <div class="form-group">
@@ -3183,7 +3423,7 @@ function openProjectModal(projectId = null) {
 
           <div class="form-group full">
             <label>Deskripsi</label>
-            <textarea id="projectDescription" placeholder="Jelaskan fungsi project kamu...
+            <textarea id="projectDescription" maxlength="${SECURITY_CONFIG.maxProjectDescriptionLength}" placeholder="Jelaskan fungsi project kamu...
 
 Tekan Enter untuk membuat paragraf baru. Nanti jaraknya akan ikut tampil di detail project.">${esc(project?.description || "")}</textarea>
             <small class="field-note">Enter pada deskripsi akan ikut tampil sebagai paragraf setelah project disimpan.</small>
@@ -3230,9 +3470,22 @@ async function saveProjectForm(form) {
   const tech = document.getElementById("projectTech").value.trim();
   const status = document.getElementById("projectStatus").value;
   const whatsappNumber = cleanWhatsAppNumber(document.getElementById("whatsappNumber").value.trim() || DEFAULT_WHATSAPP_NUMBER);
-  const projectDownloadUrl = document.getElementById("projectDownloadUrl").value.trim();
+  const projectDownloadUrl = normalizeExternalUrl(document.getElementById("projectDownloadUrl").value.trim());
   const manualProgressInput = document.getElementById("manualProgress").value.trim();
   const manualProgress = manualProgressInput === "" ? null : clampNumber(manualProgressInput, 0, 100);
+
+  const securityCheck = validateProjectSecurityInput({
+    name,
+    description,
+    tech,
+    whatsappNumber,
+    projectDownloadUrl
+  });
+
+  if (!securityCheck.ok) {
+    showWarningPopup(securityCheck.title, securityCheck.message);
+    return;
+  }
 
   try {
     if (projectId) {
@@ -3776,11 +4029,29 @@ function getImageDirectUrl(url = "") {
 }
 
 function isValidImageUrl(url = "") {
-  try {
-    const parsed = new URL(url.trim());
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
+  return isSafeExternalUrl(url, {
+    allowLocalHttp: true,
+    allowedHosts: SECURITY_CONFIG.allowedImageHosts
+  });
+}
+
+function setClaimKeyLoading(isLoading, text = "Memproses Key...") {
+  const form = document.getElementById("claimKeyForm");
+  const input = document.getElementById("accessKeyInput");
+  const button = form?.querySelector("button[type='submit']");
+
+  if (input) input.disabled = Boolean(isLoading);
+
+  if (!button) return;
+
+  button.disabled = Boolean(isLoading);
+  button.classList.toggle("is-loading", Boolean(isLoading));
+
+  if (isLoading) {
+    button.dataset.originalText = button.dataset.originalText || button.textContent.trim() || "Buka Akses Source Code";
+    button.innerHTML = `<span class="btn-loader"></span>${text}`;
+  } else {
+    button.innerHTML = button.dataset.originalText || "Buka Akses Source Code";
   }
 }
 
@@ -3827,6 +4098,14 @@ function updateSelectedProjectPhotoUrl(url = "") {
     return;
   }
 
+  if (!isValidImageUrl(selectedProjectPhotoUrl)) {
+    if (previewWrap) previewWrap.classList.add("show");
+    if (previewImg) previewImg.removeAttribute("src");
+    if (previewName) previewName.textContent = "Link foto tidak aman";
+    if (previewSize) previewSize.textContent = "Gunakan link HTTPS publik dari host yang diizinkan.";
+    return;
+  }
+
   const directUrl = getImageDirectUrl(selectedProjectPhotoUrl);
 
   if (previewWrap) previewWrap.classList.add("show");
@@ -3860,7 +4139,7 @@ async function uploadScreenshot(url) {
   if (!isValidImageUrl(rawUrl)) {
     showWarningPopup(
       "Link Foto Kurang Valid",
-      "Masukkan link yang diawali https:// atau http://. Pastikan link foto bisa dibuka publik."
+      "Gunakan link HTTPS dari Imgur, Postimages, Catbox, Googleusercontent, atau Google Drive yang sudah public."
     );
     return;
   }

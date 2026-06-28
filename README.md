@@ -1094,3 +1094,23 @@ Perubahan:
 - Deskripsi pada Detail Project dikembalikan lengkap.
 - Deskripsi pada Link Public dikembalikan lengkap.
 - Deskripsi pendek di card project sekarang tampil lagi.
+
+
+## Security Hardening
+
+Perubahan:
+- Admin dicek memakai UID dan email.
+- Percobaan key salah dibatasi dan diberi cooldown.
+- Format key divalidasi.
+- Link source code dan foto divalidasi agar tidak menerima link berbahaya.
+- Link download memakai rel noopener noreferrer nofollow.
+- Security headers untuk Vercel ditambahkan di vercel.json.
+- firestore.rules dan storage.rules ditambahkan untuk mengunci akses Firebase.
+- Baca SECURITY_SETUP.md sebelum deploy ulang.
+
+
+## Security Hardening V2
+
+- Klaim key lebih ketat.
+- Rules Firebase lebih aman.
+- Anti double submit key.

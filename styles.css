@@ -23068,3 +23068,51 @@ button[aria-label="Tutup"] {
     -webkit-line-clamp: 4 !important;
   }
 }
+
+
+/* SECURITY HARDENING */
+.security-note {
+  margin-top: 8px !important;
+  color: rgba(255, 226, 204, 0.74) !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+}
+
+.key-form input {
+  text-transform: uppercase !important;
+  letter-spacing: 0.02em !important;
+}
+
+.key-form input:focus,
+.form-group input:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  border-color: rgba(255, 117, 48, 0.42) !important;
+  box-shadow:
+    0 0 0 3px rgba(255, 117, 48, 0.10),
+    inset 0 1px 0 rgba(255,255,255,0.04) !important;
+}
+
+
+/* SECURITY V2 KEY LOADING */
+.btn.is-loading,
+button.is-loading {
+  cursor: wait !important;
+  opacity: 0.84 !important;
+}
+
+.btn-loader {
+  width: 14px !important;
+  height: 14px !important;
+  margin-right: 8px !important;
+  border-radius: 50% !important;
+  border: 2px solid rgba(255, 255, 255, 0.35) !important;
+  border-top-color: #ffffff !important;
+  display: inline-block !important;
+  vertical-align: -2px !important;
+  animation: btnSpin 0.75s linear infinite !important;
+}
+
+@keyframes btnSpin {
+  to { transform: rotate(360deg); }
+}

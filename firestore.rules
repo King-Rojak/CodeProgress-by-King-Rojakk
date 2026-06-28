@@ -14,6 +14,10 @@ service cloud.firestore {
       return isAdmin() && userId == request.auth.uid;
     }
 
+    function isPublicAdminProject(userId) {
+      return userId == "ST4UPUpnnva8eBp11hpnTFuT6DP2" && resource.data.isPublic == true;
+    }
+
     function keyClaimOnlyChangedFields() {
       return request.resource.data.diff(resource.data).changedKeys().hasOnly([
         "isUsed",
@@ -53,7 +57,10 @@ service cloud.firestore {
       allow read, write: if isAdminOwner(userId);
 
       match /projects/{projectId} {
-        allow read: if isAdminOwner(userId);
+        // Admin bisa baca semua project miliknya.
+        // Guest/member hanya bisa baca project admin yang isPublic = true.
+        // Link source code tetap aman karena fileUrl disimpan di subcollection private/settings dan key.
+        allow read: if isAdminOwner(userId) || isPublicAdminProject(userId);
         allow create, update, delete: if isAdminOwner(userId);
 
         match /private/{docId} {

@@ -1557,14 +1557,38 @@ async function loadPublicProject(ownerUid, projectId) {
   renderPublicLoading();
 
   try {
-    const projectSnap = await getDoc(getUserProjectRef(ownerUid, projectId));
+    let project = null;
+    let actualOwnerUid = ownerUid;
 
-    if (!projectSnap.exists()) {
-      renderPublicNotFound();
-      return;
+    /*
+      Fix public link:
+      Jangan langsung baca users/{uid}/projects/{id} karena rules ketat bisa menolak member/guest.
+      Ambil data public dari mirror publicProjects/{projectId} dulu.
+      Kalau mirror belum ada, baru fallback ke project admin yang isPublic = true.
+    */
+    const publicSnap = await getDoc(getPublicMirrorProjectRef(projectId));
+
+    if (publicSnap.exists()) {
+      const publicData = publicSnap.data();
+
+      if (publicData.ownerUid && publicData.ownerUid !== ownerUid) {
+        renderPublicNotFound("Link public tidak cocok dengan pemilik project.");
+        return;
+      }
+
+      project = normalizeProjectData(publicSnap.id, publicData);
+      actualOwnerUid = publicData.ownerUid || ownerUid;
+    } else {
+      const privateSnap = await getDoc(getUserProjectRef(ownerUid, projectId));
+
+      if (!privateSnap.exists()) {
+        renderPublicNotFound("Project public belum tersedia. Admin perlu membuka dashboard sekali atau mengaktifkan ulang share project.");
+        return;
+      }
+
+      project = normalizeProjectData(privateSnap.id, privateSnap.data());
+      actualOwnerUid = ownerUid;
     }
-
-    const project = normalizeProjectData(projectSnap.id, projectSnap.data());
 
     if (!project.isPublic) {
       renderPublicNotFound("Pemilik project belum mengaktifkan mode public.");
@@ -1572,14 +1596,20 @@ async function loadPublicProject(ownerUid, projectId) {
     }
 
     publicProject = project;
-    publicOwnerUid = ownerUid;
+    publicOwnerUid = actualOwnerUid;
 
-    await loadStoredAccess(ownerUid, projectId);
-    renderPublicProject(project, ownerUid);
-  setTimeout(photoProjectScrollV2, 120);
+    await loadStoredAccess(actualOwnerUid, projectId);
+    renderPublicProject(project, actualOwnerUid);
+    setTimeout(photoProjectScrollV2, 120);
   } catch (error) {
     console.error(error);
-    renderPublicNotFound("Gagal membuka project. Cek rules atau koneksi internet.");
+
+    if (error?.code === "permission-denied") {
+      renderPublicNotFound("Akses public ditolak oleh Firestore Rules. Pasang ulang firestore.rules terbaru dari ZIP ini, lalu refresh.");
+      return;
+    }
+
+    renderPublicNotFound("Gagal membuka project. Cek koneksi internet atau coba refresh halaman.");
   }
 }
 

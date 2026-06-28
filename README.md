@@ -1127,3 +1127,13 @@ Perubahan:
 - Link harus masuk host aman.
 - Kalau admin menghapus key, akses dari web akan gagal.
 - Baca `PUBLIC_LINK_SECURITY.md`.
+
+
+## Fix Link Public Tidak Bisa Dibuka
+
+Perubahan:
+- Public link sekarang membaca `publicProjects` lebih dulu.
+- Jika mirror belum ada, fallback ke project admin yang `isPublic = true`.
+- Firestore Rules diubah agar project admin public boleh dibaca.
+- Data private source code tetap terkunci di `private/settings` dan `keys`.
+- Baca `FIX_LINK_PUBLIC.md`.
